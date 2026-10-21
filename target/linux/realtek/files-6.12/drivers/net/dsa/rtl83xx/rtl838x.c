@@ -1550,7 +1550,7 @@ static void rtl838x_route_read(int idx, struct rtl83xx_route *rt)
 {
 	/* Read ROUTING table (2) via register RTL8380_TBL_1 */
 	struct table_reg *r = rtl_table_get(RTL8380_TBL_1, 2);
-
+	pr_info("WC: route_write idx=%d gw=%llx\\n", idx, rt->nh.gw);
 	pr_debug("In %s, id %d\n", __func__, idx);
 	rtl_table_read(r, idx);
 

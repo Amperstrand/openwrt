@@ -681,8 +681,10 @@ static int rtl83xx_l3_nexthop_update(struct rtl838x_switch_priv *priv,  __be32 i
 	struct rtl83xx_route *r;
 	struct rhlist_head *tmp, *list;
 
+	pr_info("WC: nh_update(2) ip=%pI4 mac=%016llx\\n", &ip_addr, mac);
 	rcu_read_lock();
 	list = rhltable_lookup(&priv->routes, &ip_addr, route_ht_params);
+	pr_info("WC: nh_lookup_hit=%d\\n", !!list);
 	if (!list) {
 		rcu_read_unlock();
 		return -ENOENT;
@@ -701,6 +703,7 @@ static int rtl83xx_l3_nexthop_update(struct rtl838x_switch_priv *priv,  __be32 i
 		r->nh.id = r->id;
 
 		/* Do we need to explicitly add a DMAC entry with the route's nh index? */
+		pr_info("WC: pre_egress_mac id=%d guard=%d\\n", r->id, !!priv->r->set_l3_egress_mac);
 		if (priv->r->set_l3_egress_mac)
 			priv->r->set_l3_egress_mac(r->id, mac);
 
@@ -722,12 +725,14 @@ static int rtl83xx_l3_nexthop_update(struct rtl838x_switch_priv *priv,  __be32 i
 			pr_info("%s: Got slot for route: %d\n", __func__, slot);
 			priv->r->host_route_write(slot, r);
 		} else {
-			priv->r->route_write(r->id, r);
+			pr_info("WC: pre_route_write id=%d l2_id=%d\n", r->id, r->nh.l2_id);
+				priv->r->route_write(r->id, r);
 			r->pr.fwd_sel = true;
 			r->pr.fwd_data = r->nh.l2_id;
 			r->pr.fwd_act = PIE_ACT_ROUTE_UC;
 		}
 
+		pr_info("WC: pre_set_l3_nexthop id=%d guard=%d\\n", r->nh.id, !!priv->r->set_l3_nexthop);
 		if (priv->r->set_l3_nexthop)
 			priv->r->set_l3_nexthop(r->nh.id, r->nh.l2_id, r->nh.if_id);
 
@@ -1087,6 +1092,7 @@ static int rtldsa_fib4_add(struct rtl838x_switch_priv *priv,
 	struct rtl83xx_route *route;
 	int port;
 
+	pr_info("WC: fib4_add dst=%pI4/%d ndev=%s vlan=%d\\n", &info->dst, info->dst_len, ndev->name, vlan);
 	if (rtldsa_fib4_check(priv, info, FIB_EVENT_ENTRY_ADD))
 		return 0;
 
@@ -1113,6 +1119,7 @@ static int rtldsa_fib4_add(struct rtl838x_switch_priv *priv,
 	route->prefix_len = info->dst_len;
 	route->nh.rvid = vlan;
 
+	pr_info("WC: router_mac_guard=%d gw=%pI4\\n", !!priv->r->set_l3_router_mac, &nh->fib_nh_gw4);
 	if (priv->r->set_l3_router_mac) {
 		u64 mac = ether_addr_to_u64(ndev->dev_addr);
 
@@ -1174,6 +1181,7 @@ static void rtl83xx_net_event_work_do(struct work_struct *work)
 	struct net_event_work *net_work =
 		container_of(work, struct net_event_work, work);
 	struct rtl838x_switch_priv *priv = net_work->priv;
+	pr_info("WC: nw_do_enter ip=%pI4 mac=%016llx\\n", &net_work->gw_addr, net_work->mac);
 
 	rtl83xx_l3_nexthop_update(priv, net_work->gw_addr, net_work->mac);
 
@@ -1193,6 +1201,7 @@ static int rtl83xx_netevent_event(struct notifier_block *this,
 
 	switch (event) {
 	case NETEVENT_NEIGH_UPDATE:
+		pr_info("WC: neigh_update dev=%s nud=%x ip=%pI4\\n", n->dev->name, n->nud_state, (u32 *)n->primary_key);
 		/* ignore events for HW with missing L3 offloading implementation */
 		if (!priv->r->l3_setup)
 			return NOTIFY_DONE;
@@ -1209,6 +1218,7 @@ static int rtl83xx_netevent_event(struct notifier_block *this,
 		net_work = kzalloc(sizeof(*net_work), GFP_ATOMIC);
 		if (!net_work)
 			return NOTIFY_BAD;
+		pr_info("WC: nw_alloc ok ip=%pI4 port=%d\\n", (u32 *)n->primary_key, port);
 
 		INIT_WORK(&net_work->work, rtl83xx_net_event_work_do);
 		net_work->priv = priv;
@@ -1218,6 +1228,7 @@ static int rtl83xx_netevent_event(struct notifier_block *this,
 
 		pr_debug("%s: updating neighbour on port %d, mac %016llx\n",
 			 __func__, port, net_work->mac);
+		pr_info("WC: nw_queue mac=%016llx wq=%ps\\n", net_work->mac, priv->wq);
 		queue_work(priv->wq, &net_work->work);
 		if (err)
 			netdev_warn(dev, "failed to handle neigh update (err %d)\n", err);
