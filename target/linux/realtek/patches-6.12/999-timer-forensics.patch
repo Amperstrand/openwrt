@@ -1,0 +1,40 @@
+--- a/drivers/clocksource/timer-rtl-otto.c	2026-10-21 20:26:39.542896774 +0200
++++ b/drivers/clocksource/timer-rtl-otto.c	2026-10-21 22:33:46.505154029 +0200
+@@ -4,6 +4,9 @@
+ 
+ #include <linux/clk.h>
+ #include <linux/clockchips.h>
++#include <linux/kallsyms.h>
++#include <asm/irq_regs.h>
++#include <asm/atomic.h>
+ #include <linux/cpu.h>
+ #include <linux/cpuhotplug.h>
+ #include <linux/cpumask.h>
+@@ -101,6 +104,27 @@
+ 	struct clock_event_device *clkevt = dev_id;
+ 	struct timer_of *to = to_timer_of(clkevt);
+ 
++	static unsigned int wc_ticks;
++
++	if (++wc_ticks >= 200) {
++		static char sym[KSYM_SYMBOL_LEN];
++		static char sym2[KSYM_SYMBOL_LEN];
++		struct pt_regs *r = get_irq_regs();
++		extern atomic_t irq_err_count;
++
++		sprint_symbol(sym, (unsigned long)clkevt->event_handler);
++		if (r) {
++			sprint_symbol(sym2, r->cp0_epc);
++			pr_info("WEDGE-TICK: h=%s state=%u STUCK-AT=%s ERR=%d\n",
++				sym, clkevt->state_use_accessors, sym2,
++				atomic_read(&irq_err_count));
++		} else {
++			pr_info("WEDGE-TICK: h=%s no-regs ERR=%d\n", sym,
++				atomic_read(&irq_err_count));
++		}
++		wc_ticks = 0;
++	}
++
+ 	rttm_ack_irq(to->of_base.base);
+ 	RTTM_DEBUG(to->of_base.base);
+ 	clkevt->event_handler(clkevt);
