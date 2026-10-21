@@ -1,5 +1,5 @@
 --- a/drivers/clocksource/timer-rtl-otto.c	2026-10-21 20:26:39.542896774 +0200
-+++ b/drivers/clocksource/timer-rtl-otto.c	2026-10-21 22:33:46.505154029 +0200
++++ b/drivers/clocksource/timer-rtl-otto.c	2026-10-21 23:12:24.463662681 +0200
 @@ -4,6 +4,9 @@
  
  #include <linux/clk.h>
@@ -10,7 +10,7 @@
  #include <linux/cpu.h>
  #include <linux/cpuhotplug.h>
  #include <linux/cpumask.h>
-@@ -101,6 +104,27 @@
+@@ -101,6 +104,40 @@
  	struct clock_event_device *clkevt = dev_id;
  	struct timer_of *to = to_timer_of(clkevt);
  
@@ -21,16 +21,29 @@
 +		static char sym2[KSYM_SYMBOL_LEN];
 +		struct pt_regs *r = get_irq_regs();
 +		extern atomic_t irq_err_count;
++		u32 cause, cnt;
 +
++		__asm__ __volatile__(
++			"mfc0 %0, $13, 0\n\t"
++			"mfc0 %1, $9, 0\n\t"
++			: "=r"(cause), "=r"(cnt));
 +		sprint_symbol(sym, (unsigned long)clkevt->event_handler);
 +		if (r) {
 +			sprint_symbol(sym2, r->cp0_epc);
-+			pr_info("WEDGE-TICK: h=%s state=%u STUCK-AT=%s ERR=%d\n",
-+				sym, clkevt->state_use_accessors, sym2,
-+				atomic_read(&irq_err_count));
++			pr_info("WEDGE-TICK: h=%s STUCK-AT=%s ERR=%d CAUSE=%08x\n",
++				sym, sym2, atomic_read(&irq_err_count), cause);
 +		} else {
-+			pr_info("WEDGE-TICK: h=%s no-regs ERR=%d\n", sym,
-+				atomic_read(&irq_err_count));
++			pr_info("WEDGE-TICK: h=%s no-regs ERR=%d CAUSE=%08x\n",
++				sym, atomic_read(&irq_err_count), cause);
++		}
++		if (cause & 0x8000) {
++			/* IP7 pending: ack by rewriting compare (unused by timer@3100) */
++			u32 cmp = cnt + 0x10000000;
++			__asm__ __volatile__(
++				"mtc0 %0, $11, 0\n\t"
++			"ehb"
++			:: "r"(cmp));
++			pr_info("WEDGE-TICK: acked stray IP7, compare=%08x\n", cmp);
 +		}
 +		wc_ticks = 0;
 +	}
