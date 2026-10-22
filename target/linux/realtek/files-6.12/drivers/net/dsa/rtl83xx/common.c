@@ -137,7 +137,9 @@ static int rtl_table_exec(struct table_reg *r, bool is_write, int idx)
 /* Reads table index idx into the data registers of the table */
 int rtl_table_read(struct table_reg *r, int idx)
 {
+	pr_info("WC-TBL: read t=%d idx=%d\n", r->tbl, idx);
 	return rtl_table_exec(r, false, idx);
+	pr_info("WC-TBL: read done\n");
 }
 
 /* Writes the content of the table data registers into the table at index idx */

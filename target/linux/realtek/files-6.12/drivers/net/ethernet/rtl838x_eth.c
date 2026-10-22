@@ -7,6 +7,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/etherdevice.h>
 #include <linux/interrupt.h>
+#include <linux/jiffies.h>
 #include <linux/io.h>
 #include <linux/platform_device.h>
 #include <linux/sched.h>
@@ -90,6 +91,16 @@ struct notify_b {
 	u32			ring[NOTIFY_BLOCKS];
 	u32			reserved2[8];
 };
+
+/* WEDGE-FIX: reading the RX current-pointer register in the per-poll
+ * hot path can wedge the SoC DMA register interface under heavy RX
+ * load: the uncached load never completes and the CPU pipeline stalls
+ * at the next barrier (livelock, only recoverable by reset). Gate it
+ * behind a debug flag; the NAPI budget bounds the poll loop anyway.
+ */
+static bool rx_cur_debug;
+module_param(rx_cur_debug, bool, 0644);
+MODULE_PARM_DESC(rx_cur_debug, "read RX current-pointer register in poll (debug)");
 
 static void rtl838x_create_tx_header(struct p_hdr *h, unsigned int dest_port, int prio)
 {
@@ -1169,7 +1180,23 @@ static int rtl838x_hw_receive(struct net_device *dev, int r, int budget)
 
 	pr_debug("---------------------------------------------------------- RX - %d\n", r);
 	spin_lock_irqsave(&priv->lock, flags);
-	last = (u32 *)KSEG1ADDR(sw_r32(priv->r->dma_if_rx_cur + r * 4));
+	{
+		static unsigned long wc_t;
+		if (time_after(jiffies, wc_t)) {
+			pr_info("WC-RX: pre-cursor r=%d\n", r);
+			wc_t = jiffies + HZ / 10;
+		}
+	}
+	last = rx_cur_debug
+		? (u32 *)KSEG1ADDR(sw_r32(priv->r->dma_if_rx_cur + r * 4))
+		: NULL;
+	{
+		static unsigned long wc_t2;
+		if (time_after(jiffies, wc_t2)) {
+			pr_info("WC-RX: post-cursor r=%d\n", r);
+			wc_t2 = jiffies + HZ / 10;
+		}
+	}
 
 	do {
 		struct sk_buff *skb;
@@ -1179,7 +1206,7 @@ static int rtl838x_hw_receive(struct net_device *dev, int r, int budget)
 		int len;
 
 		if ((ring->rx_r[r][ring->c_rx[r]] & 0x1)) {
-			if (&ring->rx_r[r][ring->c_rx[r]] != last) {
+			if (rx_cur_debug && &ring->rx_r[r][ring->c_rx[r]] != last) {
 				netdev_warn(dev, "Ring contention: r: %x, last %x, cur %x\n",
 					    r, (u32)last, (u32)&ring->rx_r[r][ring->c_rx[r]]);
 			}
@@ -1188,7 +1215,14 @@ static int rtl838x_hw_receive(struct net_device *dev, int r, int budget)
 
 		h = &ring->rx_header[r][ring->c_rx[r]];
 		data = (u8 *)KSEG1ADDR(h->buf);
-		len = h->len;
+		{
+			static unsigned long wc_t3;
+			len = h->len;
+			if (time_after(jiffies, wc_t3)) {
+				pr_info("WC-RX: len-ok %d\n", len);
+				wc_t3 = jiffies + HZ / 10;
+			}
+		}
 		if (!len)
 			break;
 		work_done++;
@@ -1256,8 +1290,25 @@ static int rtl838x_hw_receive(struct net_device *dev, int r, int budget)
 					       WRAP :
 					       0x1);
 		ring->c_rx[r] = (ring->c_rx[r] + 1) % priv->rxringlen;
-		last = (u32 *)KSEG1ADDR(sw_r32(priv->r->dma_if_rx_cur + r * 4));
-	} while (&ring->rx_r[r][ring->c_rx[r]] != last && work_done < budget);
+		{
+		static unsigned long wc_t;
+		if (time_after(jiffies, wc_t)) {
+			pr_info("WC-RX: pre-cursor r=%d\n", r);
+			wc_t = jiffies + HZ / 10;
+		}
+	}
+	last = rx_cur_debug
+		? (u32 *)KSEG1ADDR(sw_r32(priv->r->dma_if_rx_cur + r * 4))
+		: NULL;
+	{
+		static unsigned long wc_t2;
+		if (time_after(jiffies, wc_t2)) {
+			pr_info("WC-RX: post-cursor r=%d\n", r);
+			wc_t2 = jiffies + HZ / 10;
+		}
+	}
+	} while (work_done < budget &&
+		 (!rx_cur_debug || &ring->rx_r[r][ring->c_rx[r]] != last));
 
 	/* Update counters */
 	priv->r->update_cntr(r, work_done);
