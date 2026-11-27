@@ -78,7 +78,16 @@ extern "C" {
 
 #if defined(SIZEOF_LONG_LONG) && SIZEOF_LONG_LONG == 8
 # if SIZEOF_LONG == 4
-#  define THIRTY_TWO_BIT
+   /* 32-bit long with a 64-bit long long (mips, arm32, ...): use the
+    * 64-bit-word BN path. THIRTY_TWO_BIT's word math is broken here:
+    * fixed-input BN-ops tests on mipsel hardware show BigIntegerAdd
+    * returning wrong bytes and BN_mod_exp returning zero/hanging,
+    * which ead surfaces as a silent SRP "Authentication failed"
+    * (B length 0, u = SHA1("")). 64-bit words (unsigned long long)
+    * through the portable #else bn_asm are byte-for-byte correct on
+    * both 32- and 64-bit targets.
+    */
+#  define SIXTY_FOUR_BIT
 # else
 #  define SIXTY_FOUR_BIT_LONG
 # endif
