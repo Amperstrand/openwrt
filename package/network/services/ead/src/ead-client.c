@@ -12,6 +12,7 @@
  * GNU General Public License for more details.
  */
 
+#include <net/if.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -63,6 +64,7 @@ static struct t_preconf *tcp;
 static int auth_type = EAD_AUTH_DEFAULT;
 static int timeout = EAD_TIMEOUT;
 static uint16_t sid = 0;
+static char binddev[IFNAMSIZ] = "";
 
 static void
 set_nonblock(int enable)
@@ -349,8 +351,21 @@ int main(int argc, char **argv)
 	local.sin_addr.s_addr = INADDR_ANY;
 	local.sin_port = 0;
 
-	while ((ch = getopt(argc, argv, "b:s:h")) != -1) {
+	while ((ch = getopt(argc, argv, "b:s:l:w:D:h")) != -1) {
 		switch(ch) {
+		case 'l':
+			inet_aton(optarg, &local.sin_addr);
+			break;
+		case 'w':
+			{
+				int ms = atoi(optarg);
+				if (ms >= 100)
+					timeout = ms;
+			}
+			break;
+		case 'D':
+			strncpy(binddev, optarg, sizeof(binddev) - 1);
+			break;
 		case 's':
 			inet_aton(optarg, &serverip);
 			break;
@@ -399,6 +414,12 @@ int main(int argc, char **argv)
 	}
 
 	setsockopt(s, SOL_SOCKET, SO_BROADCAST, &val, sizeof(val));
+
+	if (binddev[0] &&
+	    setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, binddev, strlen(binddev)) < 0) {
+		perror("SO_BINDTODEVICE");
+		return -1;
+	}
 
 	if (bind(s, (struct sockaddr *)&local, sizeof(local)) < 0) {
 		perror("bind");

@@ -85,7 +85,11 @@ static u16_t nid = 0xffff; /* node id */
 static char username[32] = "";
 static int state = EAD_TYPE_SET_USERNAME;
 static const char *passwd_file = PASSWD_FILE;
-static const char password[MAXPARAMLEN];
+static char password[MAXPARAMLEN];	/* bench fix: 'const' REMOVED —
+					 * prepare_password() strncpy()s into it;
+					 * const puts it in .rodata => SIGSEGV or
+					 * UB-elided writes (auth silently fails,
+					 * build-dependent). MUST stay writable. */
 static bool child_pending = false;
 
 static unsigned char abuf[MAXPARAMLEN + 1];
@@ -145,8 +149,13 @@ ead_open_pcap(const char *ifname, char *errbuf, bool rx)
 	pcap_set_snaplen(p, PCAP_MRU);
 	pcap_set_promisc(p, rx);
 	pcap_set_timeout(p, PCAP_TIMEOUT);
-	pcap_set_protocol_linux(p, (rx ? htons(ETH_P_IP) : 0));
+	pcap_set_protocol_linux(p, (rx ? ETH_P_IP : 0));
 	pcap_set_buffer_size(p, (rx ? 10 : 1) * PCAP_MRU);
+	/* bench fix (re-applied): RX handle needs immediate mode or the
+	 * TPACKET ring walker spins POLLIN-blind on frames that land while
+	 * a callback is in flight (SET_USERNAME-ACK vs GET_PRIME race).
+	 * TX handle must NOT have it — immediate mode breaks sendpacket. */
+	pcap_set_immediate_mode(p, (rx ? 1 : 0));
 	pcap_activate(p);
 	set_recv_type(p, rx);
 out:
